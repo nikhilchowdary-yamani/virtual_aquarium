@@ -1,125 +1,292 @@
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'fish.dart';
+import 'db_helper.dart';
 
 void main() {
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({Key? key}) : super(key: key);
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Virtual Aquarium',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
+        primarySwatch: Colors.blue,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const AquariumPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class AquariumPage extends StatefulWidget {
+  const AquariumPage({Key? key}) : super(key: key);
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  _AquariumPageState createState() => _AquariumPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _AquariumPageState extends State<AquariumPage> with TickerProviderStateMixin {
+  List<Fish> fishList = [];
+  late AnimationController _controller;
+  late Timer _timer;
+  final DatabaseHelper _dbHelper = DatabaseHelper();
+  
+  Color selectedColor = Colors.blue;
+  double selectedSpeed = 2.0;
+  bool collisionEnabled = true;
+  
+  final Size aquariumSize = const Size(300, 300);
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(seconds: 1),
+      vsync: this,
+    )..repeat();
+    
+    // Load settings from database
+    _loadSettings();
+    
+    // Start animation timer
+    _timer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      _updateFishPositions();
     });
+  }
+
+  Future<void> _loadSettings() async {
+    final settings = await _dbHelper.loadSettings();
+    if (settings != null) {
+      setState(() {
+        selectedSpeed = settings['speed'];
+        selectedColor = Color(settings['color']);
+        collisionEnabled = settings['collisionEnabled'] == 1;
+        
+        // Add fish based on saved count
+        int fishCount = settings['fishCount'];
+        fishList.clear();
+        for (int i = 0; i < fishCount; i++) {
+          _addFish();
+        }
+      });
+    }
+  }
+
+  void _updateFishPositions() {
+    if (!mounted) return;
+    
+    setState(() {
+      // Move each fish
+      for (var fish in fishList) {
+        fish.move(aquariumSize);
+        if (fish.isGrowing) {
+          fish.updateSize();
+        }
+      }
+      
+      // Check for collisions if enabled
+      if (collisionEnabled) {
+        for (int i = 0; i < fishList.length; i++) {
+          for (int j = i + 1; j < fishList.length; j++) {
+            _checkForCollision(fishList[i], fishList[j]);
+          }
+        }
+      }
+    });
+  }
+
+  void _checkForCollision(Fish fish1, Fish fish2) {
+    if ((fish1.position.dx - fish2.position.dx).abs() < fish1.size &&
+        (fish1.position.dy - fish2.position.dy).abs() < fish1.size) {
+      // Collision detected, change direction and color
+      fish1.changeDirection();
+      fish2.changeDirection();
+      
+      // Random color change on collision
+      setState(() {
+        fish1.color = Color.fromARGB(
+          255,
+          Random().nextInt(256),
+          Random().nextInt(256),
+          Random().nextInt(256),
+        );
+      });
+    }
+  }
+
+  void _addFish() {
+    if (fishList.length < 10) {
+      setState(() {
+        Fish newFish = Fish(
+          color: selectedColor,
+          speed: selectedSpeed,
+        );
+        newFish.isGrowing = true; // Start the growing animation
+        fishList.add(newFish);
+      });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Maximum of 10 fish reached!')),
+      );
+    }
+  }
+
+  Future<void> _saveSettings() async {
+    await _dbHelper.saveSettings(
+      fishList.length,
+      selectedSpeed,
+      selectedColor.value,
+      collisionEnabled,
+    );
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Settings saved!')),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _timer.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: const Text('Virtual Aquarium'),
       ),
       body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
           mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
+          children: [
+            // Aquarium container
+            Container(
+              width: 300,
+              height: 300,
+              decoration: BoxDecoration(
+                color: Colors.lightBlue.shade100,
+                border: Border.all(color: Colors.blue, width: 2),
+              ),
+              child: Stack(
+                children: [
+                  for (var fish in fishList)
+                    Positioned(
+                      left: fish.position.dx,
+                      top: fish.position.dy,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        width: fish.size,
+                        height: fish.size,
+                        decoration: BoxDecoration(
+                          color: fish.color,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+            const SizedBox(height: 20),
+            
+            // Controls
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: _addFish,
+                  child: const Text('Add Fish'),
+                ),
+                const SizedBox(width: 20),
+                ElevatedButton(
+                  onPressed: _saveSettings,
+                  child: const Text('Save Settings'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            
+            // Speed Slider
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  const Text('Speed: '),
+                  Expanded(
+                    child: Slider(
+                      value: selectedSpeed,
+                      min: 0.5,
+                      max: 5.0,
+                      divisions: 9,
+                      label: selectedSpeed.toStringAsFixed(1),
+                      onChanged: (value) {
+                        setState(() {
+                          selectedSpeed = value;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Color Selection
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  const Text('Color: '),
+                  const SizedBox(width: 10),
+                  for (var color in [Colors.blue, Colors.red, Colors.green, Colors.yellow, Colors.purple])
+                    GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          selectedColor = color;
+                        });
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.all(5),
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: color,
+                          shape: BoxShape.circle,
+                          border: color == selectedColor
+                              ? Border.all(color: Colors.black, width: 2)
+                              : null,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            
+            // Collision Toggle (Graduate-Level Task)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  const Text('Enable Collisions: '),
+                  Switch(
+                    value: collisionEnabled,
+                    onChanged: (value) {
+                      setState(() {
+                        collisionEnabled = value;
+                      });
+                    },
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }

@@ -19,7 +19,7 @@ class Fish {
     direction = Offset(
       Random().nextDouble() * 2 - 1, 
       Random().nextDouble() * 2 - 1
-    ).normalize(),
+    ),
     size = size,
     isGrowing = true;
 
@@ -49,7 +49,7 @@ class Fish {
     direction = Offset(
       Random().nextDouble() * 2 - 1, 
       Random().nextDouble() * 2 - 1
-    ).normalize();
+    );
   }
 
   void updateSize() {
